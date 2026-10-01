@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estudio de vídeo con Puter.js</title>
+<script src="https://js.puter.com/v2/"></script>
+<style>
+:root{--bg:#eceff3;--panel:#fff;--ink:#141821;--mut:#5b6575;--line:#cdd3dc;--ac:#2457ff;--rec:#d62839;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#10141b;--panel:#181e28;--ink:#e9edf4;--mut:#9aa6b8;--line:#2b3442;--ac:#6f95ff;--rec:#ff6b78}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:940px;margin:0 auto;padding:22px 16px 60px}
+h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:0 0 4px}
+h2{font-size:16px;font-weight:650;margin:0 0 12px}
+p{margin:0 0 10px}
+.mut{color:var(--mut);font-size:13px}
+.step{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--ac);border-radius:4px;padding:16px;margin:14px 0}
+.step.rec{border-left-color:var(--rec)}
+input,textarea,select,button{font:inherit;color:inherit;border:1px solid var(--line);border-radius:4px;padding:7px 10px;background:transparent}
+input:focus-visible,textarea:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+textarea{width:100%;resize:vertical;display:block}
+button{cursor:pointer;background:var(--ac);color:#fff;border-color:var(--ac);font-weight:600}
+button.sec{background:transparent;color:var(--ink);border-color:var(--line)}
+.step.rec button{background:var(--rec);border-color:var(--rec)}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.row label{display:flex;flex-direction:column;font-size:13px;color:var(--mut);gap:3px}
+.sc{display:grid;grid-template-columns:160px 1fr;gap:12px;border-top:1px solid var(--line);padding:12px 0}
+.sc:first-child{border-top:0}
+.th{width:160px;height:90px;object-fit:cover;border-radius:3px;background:var(--line);display:block}
+.sc textarea{margin:3px 0 8px}
+#log{white-space:pre-wrap;font:12px/1.5 ui-monospace,Consolas,monospace;color:var(--mut);max-height:150px;overflow:auto;margin-top:8px}
+canvas{width:100%;height:auto;border-radius:4px;background:#000;margin-top:10px}
+@media (max-width:620px){.sc{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<h1>Estudio de vídeo en el navegador</h1>
+<p class="mut">Guion, voz, imágenes y montaje con Puter.js. Necesitas una cuenta gratuita de Puter: el consumo sale de tu asignación mensual, no de una clave de API.</p>
+
+<section class="step">
+  <div class="row">
+    <button id="bIn">Iniciar sesión en Puter</button>
+    <button class="sec" id="bUse">Ver consumo</button>
+    <span class="mut" id="who"></span>
+  </div>
+  <p class="mut" id="use" style="margin-top:8px"></p>
+</section>
+
+<section class="step">
+  <h2>Guion</h2>
+  <textarea id="topic" rows="2" placeholder="Tema del vídeo, por ejemplo: cómo el oro se convirtió en dinero"></textarea>
+  <div class="row" style="margin-top:10px">
+    <label>Minutos<input id="mins" type="number" value="10" min="1" max="30" style="width:80px"></label>
+    <label>Segundos por imagen<input id="sps" type="number" value="12" min="6" max="25" style="width:110px"></label>
+    <label>Modelo de texto<input id="mText" value="qwen/qwen3.7-plus" style="width:220px"></label>
+    <button id="bScript">Generar guion</button>
+  </div>
+</section>
+
+<section class="step">
+  <h2>Escenas</h2>
+  <div id="scenes" class="mut">Aún no hay escenas. Genera el guion para empezar. Puedes editar cada texto y subir tu propia imagen en cualquier escena.</div>
+</section>
+
+<section class="step">
+  <h2>Voz e imágenes</h2>
+  <div class="row">
+    <label>Modelo de imagen (opcional)<input id="mImg" placeholder="el predeterminado" style="width:210px"></label>
+    <label>Escenas a generar<select id="gen"><option value="3">Prueba: las 3 primeras</option><option value="all">Todas</option></select></label>
+    <button id="bMedia">Generar voz e imágenes</button>
+  </div>
+  <p class="mut" style="margin-top:8px">Empieza con la prueba de 3 escenas y mira el consumo antes de generar todas.</p>
+</section>
+
+<section class="step rec">
+  <h2>Montaje</h2>
+  <div class="row">
+    <label>Escenas por tramo<input id="seg" type="number" value="12" min="1" style="width:100px"></label>
+    <button id="bRec">Montar y grabar</button>
+  </div>
+  <p class="mut" style="margin-top:8px">Se graba en tiempo real, sin sonido en tus altavoces. Deja esta pestaña visible. Cada tramo se descarga como .webm; para unirlos usa un editor o ffmpeg.</p>
+  <canvas id="cv" width="1280" height="720"></canvas>
+</section>
+
+<div id="log" aria-live="polite"></div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let S = [];
+let actx;
+const AC = () => actx || (actx = new (window.AudioContext || window.webkitAudioContext)());
+const log = m => { const l = $('log'); l.textContent += m + '\n'; l.scrollTop = l.scrollHeight; };
+const err = e => (e && (e.message || e.error || JSON.stringify(e))) || String(e);
+const P = () => window.puter;
+function ready() {
+  if (!P()) { log('Puter.js no se cargó. Abre esta página desde una dirección http(s) o localhost, no como archivo suelto.'); return false; }
+  return true;
+}
+
+$('bIn').onclick = async () => {
+  if (!ready()) return;
+  try { await P().auth.signIn(); const u = await P().auth.getUser(); $('who').textContent = 'Sesión iniciada: ' + u.username; }
+  catch (e) { log('Inicio de sesión: ' + err(e)); }
+};
+$('bUse').onclick = async () => {
+  if (!ready()) return;
+  try { $('use').textContent = JSON.stringify(await P().auth.getMonthlyUsage()); }
+  catch (e) { log('Consumo: ' + err(e)); }
+};
+
+const replyText = r => typeof r === 'string' ? r : (r?.message?.content?.[0]?.text ?? r?.message?.content ?? r?.text ?? String(r));
+const ask = async p => replyText(await P().ai.chat(p, { model: $('mText').value.trim() }));
+const parseJSON = s => JSON.parse(s.slice(s.search(/[\[{]/), Math.max(s.lastIndexOf(']'), s.lastIndexOf('}')) + 1));
+
+$('bScript').onclick = async () => {
+  if (!ready()) return;
+  const topic = $('topic').value.trim();
+  if (!topic) { log('Escribe un tema.'); return; }
+  const mins = +$('mins').value, sps = +$('sps').value;
+  const N = Math.round(mins * 60 / sps), words = Math.round(sps * 2.5), per = 8, K = Math.ceil(N / per);
+  $('bScript').disabled = true; S = []; render();
+  try {
+    log('Creando el esquema…');
+    const outline = parseJSON(await ask(`Divide un vídeo en español sobre "${topic}" en ${K} secciones con arco narrativo claro (gancho, desarrollo, cierre). Responde SOLO con un array JSON de ${K} strings, cada uno un resumen de una línea.`));
+    for (let i = 0; i < outline.length && S.length < N; i++) {
+      log(`Sección ${i + 1} de ${outline.length}…`);
+      const n = Math.min(per, N - S.length);
+      const arr = parseJSON(await ask(`Vídeo sobre "${topic}". Esquema: ${JSON.stringify(outline)}. Escribe la sección ${i + 1}: "${outline[i]}". Devuelve SOLO un array JSON de ${n} objetos {"narracion":"unas ${words} palabras, en español, tono claro y natural","imagen":"descripción visual detallada en inglés, sin texto dentro de la imagen"}. No repitas lo ya dicho en otras secciones.`));
+      arr.forEach(x => S.push({ text: x.narracion, prompt: x.imagen, img: null, buf: null }));
+      render();
+    }
+    log(`Guion listo: ${S.length} escenas.`);
+  } catch (e) { log('Guion: ' + err(e)); }
+  $('bScript').disabled = false;
+};
+
+function render() {
+  const box = $('scenes');
+  if (!S.length) return;
+  box.className = ''; box.innerHTML = '';
+  S.forEach((s, i) => {
+    const d = document.createElement('div'); d.className = 'sc';
+    const l = document.createElement('div');
+    if (s.img) { const im = document.createElement('img'); im.className = 'th'; im.src = s.img.src; l.append(im); }
+    else { const ph = document.createElement('div'); ph.className = 'th'; l.append(ph); }
+    const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*';
+    f.style.cssText = 'width:160px;font-size:11px;margin-top:6px;padding:3px';
+    f.setAttribute('aria-label', `Subir imagen para la escena ${i + 1}`);
+    f.onchange = () => { const im = new Image(); im.onload = () => { s.img = im; render(); }; im.src = URL.createObjectURL(f.files[0]); };
+    l.append(f);
+    const r = document.createElement('div');
+    const t1 = document.createElement('div'); t1.className = 'mut'; t1.textContent = `Escena ${i + 1}: narración`;
+    const a = document.createElement('textarea'); a.rows = 3; a.value = s.text; a.oninput = () => { s.text = a.value; s.buf = null; };
+    const t2 = document.createElement('div'); t2.className = 'mut'; t2.textContent = 'Descripción de la imagen';
+    const b = document.createElement('textarea'); b.rows = 2; b.value = s.prompt; b.oninput = () => { s.prompt = b.value; s.img = null; };
+    r.append(t1, a, t2, b);
+    d.append(l, r); box.append(d);
+  });
+}
+
+async function localImage(el) {
+  try {
+    const blob = await (await fetch(el.src)).blob();
+    const im = new Image(); im.src = URL.createObjectURL(blob); await im.decode(); return im;
+  } catch (e) { if (!el.complete) await new Promise(r => el.onload = r); return el; }
+}
+async function decodeAudio(el) {
+  const ab = await (await fetch(el.src)).arrayBuffer();
+  return AC().decodeAudioData(ab);
+}
+
+$('bMedia').onclick = async () => {
+  if (!ready()) return;
+  if (!S.length) { log('Primero genera el guion.'); return; }
+  const n = $('gen').value === 'all' ? S.length : Math.min(3, S.length);
+  const model = $('mImg').value.trim();
+  $('bMedia').disabled = true;
+  for (let i = 0; i < n; i++) {
+    const s = S[i];
+    try {
+      if (!s.buf) {
+        log(`Voz ${i + 1} de ${n}…`);
+        let a;
+        try { a = await P().ai.txt2speech(s.text, { language: 'es-ES' }); }
+        catch (e) { a = await P().ai.txt2speech(s.text); }
+        s.buf = await decodeAudio(a);
+      }
+      if (!s.img) {
+        log(`Imagen ${i + 1} de ${n}…`);
+        s.img = await localImage(await P().ai.txt2img(s.prompt, model ? { model } : undefined));
+      }
+    } catch (e) { log(`Escena ${i + 1}: ${err(e)}`); break; }
+    render();
+  }
+  $('bMedia').disabled = false;
+  log('Terminado. Revisa el consumo en la parte superior.');
+};
+
+function draw(g, im, z) {
+  const W = 1280, H = 720, k = Math.max(W / im.naturalWidth, H / im.naturalHeight) * z;
+  const w = im.naturalWidth * k, h = im.naturalHeight * k;
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  g.drawImage(im, (W - w) / 2, (H - h) / 2, w, h);
+}
+
+$('bRec').onclick = async () => {
+  const ok = S.filter(s => s.img && s.buf);
+  if (!ok.length) { log('Genera voz e imágenes antes de montar.'); return; }
+  const per = Math.max(1, +$('seg').value), cv = $('cv'), g = cv.getContext('2d'), c = AC();
+  await c.resume();
+  $('bRec').disabled = true;
+  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm';
+  for (let st = 0, part = 1; st < ok.length; st += per, part++) {
+    const grp = ok.slice(st, st + per);
+    const dest = c.createMediaStreamDestination();
+    const stream = new MediaStream([...cv.captureStream(30).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    const rec = new MediaRecorder(stream, { mimeType: mime });
+    const chunks = [];
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    rec.start(1000);
+    for (let k = 0; k < grp.length; k++) {
+      const s = grp[k], dur = s.buf.duration, src = c.createBufferSource(), zoomIn = k % 2 === 0;
+      src.buffer = s.buf; src.connect(dest); src.start();
+      const t0 = performance.now();
+      await new Promise(done => {
+        const frame = () => {
+          const p = Math.min((performance.now() - t0) / 1000 / dur, 1);
+          draw(g, s.img, zoomIn ? 1 + 0.08 * p : 1.08 - 0.08 * p);
+          p < 1 ? requestAnimationFrame(frame) : done();
+        };
+        frame();
+      });
+    }
+    await new Promise(r => { rec.onstop = r; rec.stop(); });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
+    a.download = `video_tramo_${part}.webm`; a.click();
+    log(`Tramo ${part} descargado (${grp.length} escenas).`);
+  }
+  $('bRec').disabled = false;
+};
+</script>
+</body>
+</html>
