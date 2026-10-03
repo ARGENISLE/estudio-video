@@ -31,6 +31,7 @@ button:disabled{opacity:.5;cursor:default}
 .th{width:160px;height:90px;object-fit:cover;border-radius:3px;background:var(--line);display:block}
 .sc textarea{margin:3px 0 8px}
 #log{white-space:pre-wrap;font:12px/1.5 ui-monospace,Consolas,monospace;color:var(--mut);max-height:150px;overflow:auto;margin-top:8px}
+#st{position:sticky;top:0;z-index:5;display:none;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--rec);border-radius:4px;padding:8px 12px;margin:10px 0;font-size:14px}
 canvas{display:block;max-width:100%;max-height:70vh;margin:10px auto 0;border-radius:4px;background:#000}
 @media (max-width:620px){.sc{grid-template-columns:1fr}}
 </style>
@@ -39,6 +40,8 @@ canvas{display:block;max-width:100%;max-height:70vh;margin:10px auto 0;border-ra
 <main>
 <h1>Estudio de vídeo en el navegador</h1>
 <p class="mut">Guion, voz, imágenes y montaje con Puter.js. Necesitas una cuenta gratuita de Puter: el consumo sale de tu asignación mensual, no de una clave de API.</p>
+
+<div id="st" role="status" aria-live="polite"></div>
 
 <section class="step">
   <div class="row">
@@ -113,7 +116,10 @@ const $ = id => document.getElementById(id);
 let S = [];
 let actx;
 const AC = () => actx || (actx = new (window.AudioContext || window.webkitAudioContext)());
-const log = m => { const l = $('log'); l.textContent += m + '\n'; l.scrollTop = l.scrollHeight; };
+const log = m => {
+  const l = $('log'); l.textContent += m + '\n'; l.scrollTop = l.scrollHeight;
+  const st = $('st'); st.textContent = m; st.style.display = 'block';
+};
 const err = e => (e && (e.message || e.error || JSON.stringify(e))) || String(e);
 const P = () => window.puter;
 function ready() {
