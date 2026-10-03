@@ -31,7 +31,7 @@ button:disabled{opacity:.5;cursor:default}
 .th{width:160px;height:90px;object-fit:cover;border-radius:3px;background:var(--line);display:block}
 .sc textarea{margin:3px 0 8px}
 #log{white-space:pre-wrap;font:12px/1.5 ui-monospace,Consolas,monospace;color:var(--mut);max-height:150px;overflow:auto;margin-top:8px}
-canvas{width:100%;height:auto;border-radius:4px;background:#000;margin-top:10px}
+canvas{display:block;max-width:100%;max-height:70vh;margin:10px auto 0;border-radius:4px;background:#000}
 @media (max-width:620px){.sc{grid-template-columns:1fr}}
 </style>
 </head>
@@ -71,6 +71,8 @@ canvas{width:100%;height:auto;border-radius:4px;background:#000;margin-top:10px}
   <div class="row">
     <label>Modelo de imagen (opcional)<input id="mImg" placeholder="el predeterminado" style="width:210px"></label>
     <label>Escenas a generar<select id="gen"><option value="3">Prueba: las 3 primeras</option><option value="all">Todas</option></select></label>
+    <label>Voz de la narración<select id="voz" style="width:210px"></select></label>
+    <button class="sec" id="bVoz">Probar voz</button>
     <button id="bMedia">Generar voz e imágenes</button>
   </div>
   <p class="mut" id="estM" style="margin-top:8px"></p>
@@ -88,6 +90,14 @@ canvas{width:100%;height:auto;border-radius:4px;background:#000;margin-top:10px}
 <section class="step rec">
   <h2>Montaje</h2>
   <div class="row">
+    <label>Proporción
+      <select id="ar">
+        <option value="16:9">16:9 Panorámico</option>
+        <option value="1:1">1:1 Cuadrado</option>
+        <option value="9:16">9:16 Vertical</option>
+      </select>
+    </label>
+    <label style="flex-direction:row;align-items:center;gap:6px;color:var(--ink);padding-bottom:8px"><input id="subs" type="checkbox" checked style="padding:0">Subtítulos</label>
     <label>Escenas por tramo<input id="seg" type="number" value="12" min="1" style="width:100px"></label>
     <button id="bRec">Montar y grabar</button>
   </div>
@@ -228,14 +238,13 @@ $('bMedia').onclick = async () => {
     try {
       if (!s.buf) {
         log(`Voz ${i + 1} de ${n}…`);
-        let a;
-        try { a = await P().ai.txt2speech(s.text, { language: 'es-ES' }); }
-        catch (e) { a = await P().ai.txt2speech(s.text); }
+        const a = await P().ai.txt2speech(s.text, voiceOpts());
         s.buf = await decodeAudio(a);
       }
       if (!s.img) {
         log(`Imagen ${i + 1} de ${n}…`);
-        s.img = await localImage(await P().ai.txt2img(s.prompt, model ? { model } : undefined));
+        const hint = ' Composition: the whole subject clearly visible, nothing cropped at the edges, some empty space around the head and body.';
+        s.img = await localImage(await P().ai.txt2img(s.prompt + hint, model ? { model } : undefined));
       }
     } catch (e) { log(`Escena ${i + 1}: ${err(e)}`); break; }
     render();
@@ -245,17 +254,53 @@ $('bMedia').onclick = async () => {
   refreshUsage();
 };
 
-function draw(g, im, z) {
-  const W = 1280, H = 720, k = Math.max(W / im.naturalWidth, H / im.naturalHeight) * z;
-  const w = im.naturalWidth * k, h = im.naturalHeight * k;
-  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+const bgc = document.createElement('canvas');
+
+// Texto del subtítulo que corresponde al avance p (0 a 1) de la escena
+function subAt(s, p) {
+  const n = $('ar').value === '9:16' ? 5 : 8;
+  const w = s.text.trim().split(/\s+/), parts = [];
+  for (let i = 0; i < w.length; i += n) parts.push(w.slice(i, i + n).join(' '));
+  const tot = parts.reduce((a, x) => a + x.length, 0) || 1;
+  let acc = 0;
+  for (const x of parts) { acc += x.length / tot; if (p <= acc) return x; }
+  return parts[parts.length - 1] || '';
+}
+
+function draw(g, im, z, sub) {
+  const W = g.canvas.width, H = g.canvas.height, iw = im.naturalWidth, ih = im.naturalHeight;
+  // Fondo: la misma imagen llenando el cuadro, en baja resolución y ampliada (efecto difuminado)
+  bgc.width = Math.round(W / 24); bgc.height = Math.round(H / 24);
+  const b = bgc.getContext('2d'), kb = Math.max(bgc.width / iw, bgc.height / ih);
+  b.drawImage(im, (bgc.width - iw * kb) / 2, (bgc.height - ih * kb) / 2, iw * kb, ih * kb);
+  g.imageSmoothingEnabled = true;
+  g.drawImage(bgc, 0, 0, W, H);
+  g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, 0, W, H);
+  // Imagen completa, sin recortar nada; el zoom es muy suave
+  const k = Math.min(W / iw, H / ih) * z, w = iw * k, h = ih * k;
   g.drawImage(im, (W - w) / 2, (H - h) / 2, w, h);
+  if (sub) {
+    const fs = Math.round(Math.min(W, H) * 0.06), maxW = W * 0.86;
+    g.font = `700 ${fs}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    const lines = []; let cur = '';
+    sub.split(' ').forEach(t => {
+      const tr = cur ? cur + ' ' + t : t;
+      if (g.measureText(tr).width > maxW && cur) { lines.push(cur); cur = t; } else cur = tr;
+    });
+    if (cur) lines.push(cur);
+    let y = H - H * (H > W ? 0.14 : 0.08) - (lines.length - 1) * fs * 1.2;
+    g.lineJoin = 'round'; g.lineWidth = fs * 0.22; g.strokeStyle = '#000'; g.fillStyle = '#fff';
+    lines.forEach(l => { g.strokeText(l, W / 2, y); g.fillText(l, W / 2, y); y += fs * 1.2; });
+  }
 }
 
 $('bRec').onclick = async () => {
   const ok = S.filter(s => s.img && s.buf);
   if (!ok.length) { log('Genera voz e imágenes antes de montar.'); return; }
-  const per = Math.max(1, +$('seg').value), cv = $('cv'), g = cv.getContext('2d'), c = AC();
+  const per = Math.max(1, +$('seg').value), cv = $('cv'), c = AC();
+  const dims = { '16:9': [1280, 720], '1:1': [1080, 1080], '9:16': [720, 1280] }[$('ar').value];
+  cv.width = dims[0]; cv.height = dims[1];
+  const g = cv.getContext('2d'), withSubs = $('subs').checked;
   await c.resume();
   $('bRec').disabled = true;
   const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm';
@@ -274,7 +319,7 @@ $('bRec').onclick = async () => {
       await new Promise(done => {
         const frame = () => {
           const p = Math.min((performance.now() - t0) / 1000 / dur, 1);
-          draw(g, s.img, zoomIn ? 1 + 0.08 * p : 1.08 - 0.08 * p);
+          draw(g, s.img, zoomIn ? 1 + 0.04 * p : 1.04 - 0.04 * p, withSubs ? subAt(s, p) : '');
           p < 1 ? requestAnimationFrame(frame) : done();
         };
         frame();
@@ -287,6 +332,38 @@ $('bRec').onclick = async () => {
     log(`Tramo ${part} descargado (${grp.length} escenas).`);
   }
   $('bRec').disabled = false;
+};
+
+const VOCES = [
+  ['Miguel · hombre, español latino (estándar)', { provider: 'aws-polly', voice: 'Miguel', language: 'es-US', engine: 'standard' }],
+  ['Pedro · hombre, español latino (neural, más natural)', { provider: 'aws-polly', voice: 'Pedro', language: 'es-US', engine: 'neural' }],
+  ['Lupe · mujer, español latino (neural)', { provider: 'aws-polly', voice: 'Lupe', language: 'es-US', engine: 'neural' }]
+];
+function addVoice(text, opts) {
+  const o = document.createElement('option');
+  o.textContent = text; o.value = JSON.stringify(opts);
+  $('voz').append(o);
+}
+VOCES.forEach(([t, v]) => addVoice(t, v));
+function voiceOpts() { return JSON.parse($('voz').value); }
+
+async function loadVoices() {
+  try {
+    if (!P() || typeof P().ai.txt2speech.listVoices !== 'function') return;
+    const list = await P().ai.txt2speech.listVoices();
+    if (!Array.isArray(list)) return;
+    list.filter(v => v.language?.code?.toLowerCase().startsWith('es') && !VOCES.some(x => x[1].voice === v.id))
+      .forEach(v => addVoice(`${v.name || v.id} · ${v.language.code} · ${v.provider}`, { provider: v.provider, voice: v.id, language: v.language.code }));
+  } catch (e) { /* se queda con la lista básica */ }
+}
+window.addEventListener('load', loadVoices);
+
+$('bVoz').onclick = async () => {
+  if (!ready()) return;
+  try {
+    const a = await P().ai.txt2speech('Hola, esta es la voz de tu vídeo. ¿Te gusta cómo suena?', voiceOpts());
+    a.play();
+  } catch (e) { log('Voz: ' + err(e)); }
 };
 
 ['mins', 'sps', 'gen', 'cImg', 'cVoz', 'cTxt'].forEach(id => $(id).addEventListener('input', estimate));
